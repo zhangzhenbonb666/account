@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+accounting.db
+accounting.db-*
+config.json
+build/
+dist/
+*.spec
+.idea/
+.claude/
