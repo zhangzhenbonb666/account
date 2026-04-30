@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: accounting-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DB_PATH
+        value: /var/data/accounting.db
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
