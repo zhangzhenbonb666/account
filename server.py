@@ -1,18 +1,20 @@
 """
 记账软件 API 服务端
 启动方式: uvicorn server:app --host 0.0.0.0 --port 8000
+环境变量:
+  TURSO_DATABASE_URL - Turso 数据库 URL (如 libsql://xxx.turso.io)
+  TURSO_AUTH_TOKEN   - Turso 认证 token
 """
 
-import sqlite3
-from datetime import datetime, date
+import os
+from datetime import datetime
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-import os
-
-DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "accounting.db"))
+TURSO_URL = os.environ.get("TURSO_DATABASE_URL", "")
+TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "")
 
 app = FastAPI(title="记账本 API")
 app.add_middleware(
@@ -26,9 +28,15 @@ app.add_middleware(
 # ==================== 数据库 ====================
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    if TURSO_URL and TURSO_TOKEN:
+        import libsql_experimental as libsql
+        return libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
+    else:
+        import sqlite3
+        db_path = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "accounting.db"))
+        conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
 
 
 def init_db():
@@ -53,9 +61,12 @@ def init_db():
             created_at TEXT NOT NULL
         )
     """)
-    cols = [row[1] for row in c.execute("PRAGMA table_info(transactions)").fetchall()]
-    if "necessity" not in cols:
-        c.execute("ALTER TABLE transactions ADD COLUMN necessity TEXT DEFAULT ''")
+    try:
+        cols = [row[1] for row in c.execute("PRAGMA table_info(transactions)").fetchall()]
+        if "necessity" not in cols:
+            c.execute("ALTER TABLE transactions ADD COLUMN necessity TEXT DEFAULT ''")
+    except Exception:
+        pass
     if c.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 0:
         defaults = [
             ("工资", "income"), ("奖金", "income"), ("投资收益", "income"),
