@@ -4,9 +4,7 @@
 客户端模式：通过 HTTP API 与服务端通信
 """
 
-import csv
 import json
-import io
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, date
@@ -199,8 +197,6 @@ class App(tk.Tk):
         bar.pack(fill=tk.X)
         ttk.Label(bar, text="个人记账本", style="Title.TLabel").pack(side=tk.LEFT)
         ttk.Button(bar, text="+ 记账", style="Accent.TButton", command=self._on_add).pack(side=tk.RIGHT, padx=4)
-        ttk.Button(bar, text="导入", command=self._on_import).pack(side=tk.RIGHT, padx=4)
-        ttk.Button(bar, text="导出", command=self._on_export).pack(side=tk.RIGHT, padx=4)
         ttk.Button(bar, text="分类管理", command=self._on_manage_categories).pack(side=tk.RIGHT, padx=4)
         ttk.Button(bar, text="服务端", command=self._on_change_server).pack(side=tk.RIGHT, padx=4)
         self.asset_var = tk.StringVar(value="¥0.00")
@@ -221,9 +217,9 @@ class App(tk.Tk):
         ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
 
         # 年月筛选
-        years = get_available_years() or [date.today().year]
+        years = ["全部"] + [str(y) for y in sorted((get_available_years() or [date.today().year]), reverse=True)]
         ttk.Label(bar, text="年份:").pack(side=tk.LEFT, padx=(4, 2))
-        self.filter_year = ttk.Combobox(bar, values=sorted(years, reverse=True), width=6, state="readonly")
+        self.filter_year = ttk.Combobox(bar, values=years, width=6, state="readonly")
         self.filter_year.set(str(date.today().year))
         self.filter_year.pack(side=tk.LEFT)
         self.filter_year.bind("<<ComboboxSelected>>", lambda e: self._on_year_change())
@@ -242,8 +238,8 @@ class App(tk.Tk):
         self._refresh_list()
 
     def _refresh_year_options(self):
-        years = get_available_years() or [date.today().year]
-        self.filter_year["values"] = sorted(years, reverse=True)
+        years = ["全部"] + [str(y) for y in sorted((get_available_years() or [date.today().year]), reverse=True)]
+        self.filter_year["values"] = years
 
     # ---------- 表格 ----------
     def _build_treeview(self):
@@ -298,16 +294,21 @@ class App(tk.Tk):
         if ttype == "all":
             ttype = None
 
-        try:
-            year = int(self.filter_year.get())
-        except ValueError:
-            year = date.today().year
-
-        month_str = self.filter_month.get()
-        if month_str == "全部":
+        year_str = self.filter_year.get()
+        if year_str == "全部":
+            year = None
             month = None
         else:
-            month = int(month_str.replace("月", ""))
+            try:
+                year = int(year_str)
+            except ValueError:
+                year = date.today().year
+
+            month_str = self.filter_month.get()
+            if month_str == "全部":
+                month = None
+            else:
+                month = int(month_str.replace("月", ""))
 
         try:
             rows = query_transactions(ttype, year, month)
@@ -356,10 +357,16 @@ class App(tk.Tk):
 
     # ---------- 统计 ----------
     def _on_summary(self):
-        try:
-            year = int(self.filter_year.get())
-        except ValueError:
-            year = date.today().year
+        year_str = self.filter_year.get()
+        if year_str == "全部":
+            year = simpledialog.askinteger("选择年份", "请输入年份:", minvalue=2000, maxvalue=2100)
+            if not year:
+                return
+        else:
+            try:
+                year = int(year_str)
+            except ValueError:
+                year = date.today().year
         month_str = self.filter_month.get()
         if month_str == "全部":
             month = simpledialog.askinteger("选择月份", "请输入月份 (1-12):", minvalue=1, maxvalue=12)
@@ -387,89 +394,6 @@ class App(tk.Tk):
                 self._refresh_list()
             except Exception:
                 messagebox.showerror("连接失败", f"无法连接到: {url}")
-
-    # ---------- 导出 ----------
-    def _on_export(self):
-        filepath = filedialog.asksaveasfilename(
-            title="导出记账数据",
-            defaultextension=".csv",
-            filetypes=[("CSV 文件", "*.csv")],
-            initialfile=f"记账数据_{date.today().isoformat()}.csv",
-        )
-        if not filepath:
-            return
-        try:
-            rows = api_get("/api/transactions/export")
-            with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.writer(f)
-                writer.writerow(["类型", "金额", "分类", "必要性", "日期", "备注"])
-                for r in rows:
-                    writer.writerow([r["类型"], r["金额"], r["分类"], r["必要性"], r["日期"], r["备注"]])
-            messagebox.showinfo("导出成功", f"已导出 {len(rows)} 条记录到:\n{filepath}")
-        except Exception as e:
-            messagebox.showerror("导出失败", str(e))
-
-    # ---------- 导入 ----------
-    def _on_import(self):
-        filepath = filedialog.askopenfilename(
-            title="导入记账数据",
-            filetypes=[("CSV 文件", "*.csv")],
-        )
-        if not filepath:
-            return
-        if not messagebox.askyesno("确认导入", "导入将追加数据到当前数据库，不会覆盖已有记录。确定继续？"):
-            return
-        try:
-            transactions = []
-            skipped = 0
-            with open(filepath, "r", encoding="utf-8-sig") as f:
-                reader = csv.reader(f)
-                header = next(reader, None)
-                if not header:
-                    return
-                for row in reader:
-                    if len(row) < 5:
-                        skipped += 1
-                        continue
-                    ttype = row[0].strip()
-                    if ttype not in ("income", "expense"):
-                        skipped += 1
-                        continue
-                    try:
-                        amount = float(row[1].strip())
-                    except ValueError:
-                        skipped += 1
-                        continue
-                    category = row[2].strip()
-                    necessity = row[3].strip() if len(row) > 3 else ""
-                    txn_date = row[4].strip()
-                    note = row[5].strip() if len(row) > 5 else ""
-                    try:
-                        datetime.strptime(txn_date, "%Y-%m-%d")
-                    except ValueError:
-                        skipped += 1
-                        continue
-                    if not category:
-                        skipped += 1
-                        continue
-                    transactions.append({
-                        "type": ttype, "amount": amount, "category": category,
-                        "necessity": necessity, "date": txn_date, "note": note,
-                    })
-
-            if transactions:
-                result = api_post("/api/transactions/import", transactions)
-                added = result.get("added", 0)
-            else:
-                added = 0
-
-            self._refresh_list()
-            msg = f"导入完成: 新增 {added} 条记录"
-            if skipped:
-                msg += f"\n跳过 {skipped} 条格式错误的记录"
-            messagebox.showinfo("导入完成", msg)
-        except Exception as e:
-            messagebox.showerror("导入失败", str(e))
 
 
 # ==================== 对话框 ====================
