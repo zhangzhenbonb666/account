@@ -247,3 +247,12 @@ def get_assets():
 def get_years():
     r = turso_exec("SELECT DISTINCT strftime('%Y', date) FROM transactions ORDER BY date DESC")
     return [int(_val(row[0])) for row in r["rows"] if _val(row[0])]
+
+
+@app.get("/api/debug")
+def debug():
+    return {
+        "turso_url_set": bool(TURSO_URL),
+        "turso_token_set": bool(TURSO_TOKEN),
+        "version": "v2",
+    }
